@@ -125,3 +125,85 @@ jobs:
 
           # 推到對應分支；失敗時 rebase 後重試一次
           git push origin "HEAD:${TARGET_BRANCH}" || (git pull --rebase origin "${TARGET_BRANCH}" && git push origin "HEAD:${TARGET_BRANCH}")
+
+      # 傳 build/web/ 給 deploy-github-pages job（避免它再去 git fetch 已 push 的新 commit 的競態問題）
+      - name: Upload build/web/ as artifact for GH Pages job
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web/
+          retention-days: 1
+          include-hidden-files: true
+
+  # GitHub Pages 備份服務：game2.itsmygo.uk
+  # GH Pages 不支援自訂 HTTP headers，所以 _headers / _worker.js 必須拿掉；
+  # COOP/COEP 改靠 coi-serviceworker.js 在前端 inject。
+  # gzipped index.wasm 也要解回 raw（沒有 _worker.js 動態解壓）。
+  deploy-github-pages:
+    needs: build-and-deploy
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository (for web-extras/)
+        uses: actions/checkout@v4
+
+      - name: Download web-build artifact from build-and-deploy job
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: _site
+
+      - name: Prepare GH Pages site (unpack wasm, strip CF files, inject coi-sw)
+        run: |
+          set -e
+          cd _site
+          ls -la
+
+          # 1. 解壓 gzipped wasm（檔名是 .wasm 但內容是 gzip；GH Pages 沒有 _worker.js 解壓）
+          if [ -f index.wasm ]; then
+            MAGIC=$(od -An -tx1 -N2 index.wasm | tr -d ' \n')
+            if [ "$MAGIC" = "1f8b" ]; then
+              echo "解壓 index.wasm (gzip → raw)"
+              mv index.wasm index.wasm.gz
+              gunzip index.wasm.gz
+              ls -la index.wasm
+            else
+              echo "index.wasm magic=$MAGIC，假設已是 raw wasm"
+            fi
+          fi
+
+          # 2. 移除 CF-only 檔案（GH Pages 不認識，留著只是雜訊）
+          rm -f _worker.js _headers serve.json
+
+          # 3. 注入 coi-serviceworker.js（提供 COOP/COEP，啟用 SharedArrayBuffer）
+          cp ../web-extras/coi-serviceworker.js .
+          if ! grep -q 'coi-serviceworker.js' index.html; then
+            # 在 </head> 前 inject script tag
+            sed -i 's|</head>|    <script src="coi-serviceworker.js"></script>\n</head>|' index.html
+            echo "已注入 coi-serviceworker.js"
+          fi
+
+          # 4. GH Pages 設定檔
+          echo "game2.itsmygo.uk" > CNAME
+          touch .nojekyll
+
+          echo "--- _site/ 最終內容 ---"
+          ls -la
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
