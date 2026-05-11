@@ -1,0 +1,19 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Export build output (keep build/web/ for Cloudflare Pages deployment)
+build/*/
+!build/web/
+
+# Godot UID cache files
+*.uid
+
+
+.playwright-mcp/
+
+# Local project-level MCP config (Windows-specific cmd /c wrapper)
+.mcp.json
+
+# blog 密碼
+*/*/*/.env

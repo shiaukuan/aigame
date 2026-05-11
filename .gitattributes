@@ -1,0 +1,7 @@
+# Normalize EOL for all files that Git considers text files.
+* text=auto eol=lf
+
+# 把 build/web/ 標成 generated：GitHub PR diff 預設折疊、不計入語言統計
+build/web/** linguist-generated=true
+build/web/index.wasm binary
+build/web/index.pck binary

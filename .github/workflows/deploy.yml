@@ -1,0 +1,127 @@
+name: Deploy Web Build
+
+# 雙模觸發：
+#   - PR 開啟/更新：build + push 到 PR 分支 → CF Pages 自動建 preview URL 供 review
+#   - master push：build + push 到 master    → CF Pages 部署到 game.itsmygo.uk
+# paths 不包含 build/web/，避免 bot 自己 commit build 後再次觸發自己（無限迴圈）
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/**'
+      - 'desktop.gd'
+      - 'desktop.tscn'
+      - 'project.godot'
+      - 'export_presets.cfg'
+      - 'fonts/**'
+      - 'icon.svg'
+      - 'deploy-ci.sh'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/**'
+      - 'desktop.gd'
+      - 'desktop.tscn'
+      - 'project.godot'
+      - 'export_presets.cfg'
+      - 'fonts/**'
+      - 'icon.svg'
+      - 'deploy-ci.sh'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  # 每個分支獨立 queue。PR 期間頻繁推 commit 時，新 push 會 cancel 舊 deploy 只跑最新版
+  group: deploy-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: barichello/godot-ci:4.6.2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DEPLOY_PAT }}
+          fetch-depth: 0
+          # PR 事件預設會 checkout 「merge commit」而非 PR HEAD；用 head_ref 強制 checkout PR 分支
+          # push / workflow_dispatch 時 head_ref 為空，fallback 到 github.ref（refs/heads/master）
+          ref: ${{ github.head_ref || github.ref }}
+
+      - name: Mark workspace safe for git (container runs as root)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install runtime dependencies
+        run: |
+          apt-get update -qq
+          # python3：deploy-ci.sh 需要它更新 GODOT_CONFIG
+          # libfontconfig1：消除 godot headless 的 fontconfig 警告（本專案用自訂字型，實際無影響）
+          apt-get install -y -qq --no-install-recommends python3 libfontconfig1
+
+      - name: Verify Godot version
+        run: godot --version
+
+      - name: Install Godot 4.6.2 export templates
+        run: |
+          TEMPLATE_DIR="/github/home/.local/share/godot/export_templates/4.6.2.stable"
+          if [ -f "${TEMPLATE_DIR}/web_release.zip" ]; then
+            echo "Templates 已存在，跳過下載"
+            ls -la "${TEMPLATE_DIR}"
+            exit 0
+          fi
+
+          echo "下載 Godot 4.6.2 export templates..."
+          mkdir -p "${TEMPLATE_DIR}"
+          cd /tmp
+          # 主 URL；若 404 fallback 到 godot-builds repo
+          wget -q "https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_export_templates.tpz" \
+            || wget -q "https://github.com/godotengine/godot-builds/releases/download/4.6.2-stable/Godot_v4.6.2-stable_export_templates.tpz"
+
+          unzip -q Godot_v4.6.2-stable_export_templates.tpz
+          mv templates/* "${TEMPLATE_DIR}/"
+          rm -rf templates Godot_v4.6.2-stable_export_templates.tpz
+          ls -la "${TEMPLATE_DIR}"
+
+      - name: Run deploy-ci.sh (import + export + gzip)
+        run: |
+          chmod +x deploy-ci.sh
+          bash deploy-ci.sh
+
+      - name: Commit and push build/web/
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add build/web/
+          if git diff --cached --quiet; then
+            echo "build/web/ 沒有變動，跳過 commit"
+            exit 0
+          fi
+
+          TARGET_BRANCH="${{ github.head_ref || github.ref_name }}"
+          SOURCE_MSG=$(git log -1 --pretty=%s HEAD)
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMIT_TYPE="preview"
+          else
+            COMMIT_TYPE="deploy"
+          fi
+
+          git commit -F - <<COMMIT_MSG
+          ci(${COMMIT_TYPE}): web build for ${TARGET_BRANCH} [skip ci]
+
+          Source: ${SOURCE_MSG}
+          Commit: ${{ github.sha }}
+          COMMIT_MSG
+
+          # 推到對應分支；失敗時 rebase 後重試一次
+          git push origin "HEAD:${TARGET_BRANCH}" || (git pull --rebase origin "${TARGET_BRANCH}" && git push origin "HEAD:${TARGET_BRANCH}")

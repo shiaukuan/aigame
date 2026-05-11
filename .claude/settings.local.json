@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(reg query:*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Last used profile:', d.get\\('profile',{}\\).get\\('last_used','unknown'\\)\\)\")",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(node:*)",
+      "Bash(tasklist)",
+      "Bash(cat ~/.claude/debug/*.log)",
+      "Bash(claude --chrome-native-host --help)",
+      "Bash(claude extension:*)",
+      "Bash(tasklist /v)",
+      "Bash(wmic process:*)",
+      "Bash(taskkill:*)",
+      "Bash(claude:*)",
+      "Bash(reg add:*)",
+      "Bash(cp ~/.claude/.credentials.json ~/.claude/.credentials.json.before-linear-fix)",
+      "Read(//c/Users/User/.claude/**)"
+    ]
+  }
+}
