@@ -51,7 +51,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.DEPLOY_PAT }}
+          # 優先用 DEPLOY_PAT（push commit 才能 trigger CF Pages webhook 重 build）；
+          # 沒設時 fallback 到內建 GITHUB_TOKEN（commit push 仍會發 webhook，CF Pages 照樣 build）
+          token: ${{ secrets.DEPLOY_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
           # PR 事件預設會 checkout 「merge commit」而非 PR HEAD；用 head_ref 強制 checkout PR 分支
           # push / workflow_dispatch 時 head_ref 為空，fallback 到 github.ref（refs/heads/master）
