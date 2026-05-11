@@ -44,6 +44,8 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write  # 需要 push build/web/ 回 master（GITHUB_TOKEN fallback 才有權）
     container:
       image: barichello/godot-ci:4.6.2
 
